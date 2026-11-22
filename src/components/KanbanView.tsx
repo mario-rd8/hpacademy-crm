@@ -7,7 +7,7 @@ import type {
   Stage,
   Tag,
 } from '../types/database.types';
-import { getDaysInactive, onlyDigits } from '../utils/phone';
+import { getDaysInactive, normalizeSearchText, onlyDigits } from '../utils/phone';
 import { LeadCard } from './LeadCard';
 
 interface KanbanViewProps {
@@ -51,13 +51,13 @@ export function KanbanView({
       : stages[0]?.id || '';
 
   const filteredLeads = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = normalizeSearchText(search);
     const qDigits = onlyDigits(search);
     const now = new Date();
 
     return leads.filter((lead) => {
       if (q) {
-        const matchesName = lead.name.toLowerCase().includes(q);
+        const matchesName = normalizeSearchText(lead.name).includes(q);
         const matchesPhone = qDigits.length > 0 && lead.phone.includes(qDigits);
         if (!matchesName && !matchesPhone) return false;
       }
