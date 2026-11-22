@@ -1,9 +1,22 @@
-import { crmDb } from './supabaseClient';
+import { crmDb, supabase } from './supabaseClient';
 import type { Lead, MessageLog } from '../types/database.types';
 
-const WEBHOOK_SEND_MESSAGE = import.meta.env.VITE_WEBHOOK_SEND_MESSAGE as string | undefined;
-const WEBHOOK_BULK_SEND = import.meta.env.VITE_WEBHOOK_BULK_SEND as string | undefined;
-const EVOLUTION_INSTANCE = (import.meta.env.VITE_EVOLUTION_INSTANCE as string | undefined) || 'evaflow';
+// Endpoints nativos do servidor do CRM (sem n8n) — podem ser sobrescritos via VITE_WEBHOOK_*
+const ENDPOINT_SEND_MESSAGE =
+  (import.meta.env.VITE_WEBHOOK_SEND_MESSAGE as string | undefined) || '/api/messages/send';
+const ENDPOINT_BULK_SEND =
+  (import.meta.env.VITE_WEBHOOK_BULK_SEND as string | undefined) || '/api/messages/bulk';
+const EVOLUTION_INSTANCE =
+  (import.meta.env.VITE_EVOLUTION_INSTANCE as string | undefined) || 'evaflow';
+
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
 
 export interface SendSingleMessageParams {
   lead: Lead;
@@ -16,7 +29,15 @@ export interface SendSingleMessageParams {
 }
 
 export async function sendSingleMessage(params: SendSingleMessageParams): Promise<MessageLog> {
-  const { lead, messageBody, templateId = null, mediaUrl = null, fileName = null, fileType = null, sentBy } = params;
+  const {
+    lead,
+    messageBody,
+    templateId = null,
+    mediaUrl = null,
+    fileName = null,
+    fileType = null,
+    sentBy,
+  } = params;
 
   // 1. Cria o registro em crm.message_logs como pending para acompanhamento via Realtime
   const { data: createdLog, error: insertError } = await crmDb()
@@ -36,19 +57,11 @@ export async function sendSingleMessage(params: SendSingleMessageParams): Promis
     throw new Error(insertError?.message || 'Erro ao registrar disparo no banco.');
   }
 
-  if (!WEBHOOK_SEND_MESSAGE) {
-    const detail = 'VITE_WEBHOOK_SEND_MESSAGE não configurado no ambiente.';
-    await crmDb()
-      .from('message_logs')
-      .update({ status: 'error', error_detail: detail })
-      .eq('id', createdLog.id);
-    throw new Error(detail);
-  }
-
   try {
-    const response = await fetch(WEBHOOK_SEND_MESSAGE, {
+    const headers = await getAuthHeaders();
+    const response = await fetch(ENDPOINT_SEND_MESSAGE, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         message_log_id: createdLog.id,
         instance: EVOLUTION_INSTANCE,
@@ -64,16 +77,17 @@ export async function sendSingleMessage(params: SendSingleMessageParams): Promis
       }),
     });
 
+    const resData = await response.json().catch(() => null);
+
     if (!response.ok) {
-      const errText = await response.text().catch(() => `HTTP ${response.status}`);
+      const detail = resData?.error || `Falha no envio (${response.status})`;
       await crmDb()
         .from('message_logs')
-        .update({ status: 'error', error_detail: errText.slice(0, 500) })
+        .update({ status: 'error', error_detail: String(detail).slice(0, 500) })
         .eq('id', createdLog.id);
-      throw new Error(`Falha no webhook (${response.status}): ${errText}`);
+      throw new Error(detail);
     }
 
-    const resData = await response.json().catch(() => null);
     const evolutionId = resData?.evolution_message_id || resData?.key?.id || null;
 
     const { data: updatedLog } = await crmDb()
@@ -88,7 +102,7 @@ export async function sendSingleMessage(params: SendSingleMessageParams): Promis
 
     return (updatedLog || createdLog) as MessageLog;
   } catch (err) {
-    const detail = err instanceof Error ? err.message : 'Erro desconhecido ao chamar webhook.';
+    const detail = err instanceof Error ? err.message : 'Erro desconhecido ao enviar mensagem.';
     await crmDb()
       .from('message_logs')
       .update({ status: 'error', error_detail: detail.slice(0, 500) })
@@ -105,13 +119,10 @@ export interface SendBulkMessagesParams {
 }
 
 export async function sendBulkMessages(params: SendBulkMessagesParams): Promise<void> {
-  if (!WEBHOOK_BULK_SEND) {
-    throw new Error('VITE_WEBHOOK_BULK_SEND não configurado no ambiente.');
-  }
-
-  const response = await fetch(WEBHOOK_BULK_SEND, {
+  const headers = await getAuthHeaders();
+  const response = await fetch(ENDPOINT_BULK_SEND, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       instance: EVOLUTION_INSTANCE,
       lead_ids: params.leadIds,
@@ -122,7 +133,7 @@ export async function sendBulkMessages(params: SendBulkMessagesParams): Promise<
   });
 
   if (!response.ok) {
-    const errText = await response.text().catch(() => `HTTP ${response.status}`);
-    throw new Error(`Falha no disparo em massa (${response.status}): ${errText}`);
+    const resData = await response.json().catch(() => null);
+    throw new Error(resData?.error || `Falha no disparo em massa (${response.status})`);
   }
 }
