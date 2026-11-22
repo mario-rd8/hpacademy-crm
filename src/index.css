@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+:root {
+  --hp-blue: #012d63;
+  --hp-blue-dark: #001f47;
+  --hp-blue-soft: rgba(1, 45, 99, 0.06);
+  --hp-orange: #eb5b29;
+  --hp-orange-hover: #d44d1f;
+  --hp-orange-soft: rgba(235, 91, 41, 0.1);
+  --bg-white: #ffffff;
+  --bg-surface: #f6f7f9;
+  --bg-surface-alt: #eef1f5;
+  --border-subtle: #e5e9f0;
+  --text-main: #0f1f38;
+  --text-secondary: #5a6577;
+  --text-muted: #8a94a6;
+}
+
+@layer base {
+  html {
+    font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: var(--bg-surface);
+    color: var(--text-main);
+    overscroll-behavior-y: none;
+  }
+}
+
+/* Scrollbar minimalista */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes slideUpSheet {
+  from {
+    transform: translateY(100%);
+    opacity: 0.7;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.animate-sheet-up {
+  animation: slideUpSheet 0.24s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@media (min-width: 768px) {
+  .animate-drawer-desktop {
+    animation: slideInRight 0.24s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+}
+
+.safe-pb {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
