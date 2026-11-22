@@ -8,6 +8,7 @@ import {
   Clock,
   ExternalLink,
   FileText,
+  Globe,
   Loader2,
   MessageSquare,
   Paperclip,
@@ -397,7 +398,7 @@ export function LeadDrawer({
             )}
             {infoError && <p className="text-xs font-medium text-red-600">{infoError}</p>}
 
-            {/* Flags rápidas: WhatsApp e Matriculado */}
+            {/* Flags rápidas: WhatsApp, Origem e Matriculado */}
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -418,6 +419,14 @@ export function LeadDrawer({
                   </>
                 )}
               </button>
+
+              <span
+                title={`Origem: ${lead.source || 'manual'}`}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold border border-[#e5e9f0] bg-[#f6f7f9] text-[#5a6577] max-w-full"
+              >
+                <Globe className="h-3.5 w-3.5 shrink-0 text-[#012d63]" />
+                <span className="truncate">{lead.source || 'manual'}</span>
+              </span>
 
               {isWonStage && (
                 <button
