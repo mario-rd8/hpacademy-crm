@@ -989,8 +989,8 @@ export function ChatView({
               </div>
             )}
 
-            {/* Rodapé: Clipe + Estrela + Campo de Texto + Enviar / Microfone (fixo na base) */}
-            <footer className="px-3 sm:px-4 py-2.5 bg-white border-t border-[#e5e9f0] shrink-0 safe-pb">
+            {/* Rodapé: Clipe + Estrela + Campo de Texto + Enviar / Microfone (fixo na base com respiro inferior) */}
+            <footer className="px-3 sm:px-5 pt-3 pb-4 md:pb-5 bg-white border-t border-[#e5e9f0] shrink-0 safe-pb">
               <input
                 ref={fileInputRef}
                 type="file"

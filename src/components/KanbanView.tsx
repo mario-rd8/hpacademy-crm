@@ -126,89 +126,73 @@ export function KanbanView({
   }
 
   return (
-    <div className="flex flex-col h-full pb-24 md:pb-8">
-      {/* Barra de Filtros */}
-      <section className="bg-white border-b border-[#e5e9f0] px-4 sm:px-6 py-3.5 space-y-3">
-        <div className="max-w-[1600px] mx-auto space-y-3">
-          {/* Busca + Filtros rápidos */}
-          <div className="flex flex-col lg:flex-row lg:items-center gap-3">
-            <div className="relative flex-1 max-w-md">
-              <Search className="h-4 w-4 text-[#8a94a6] absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="search"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar por nome ou telefone..."
-                className="w-full rounded-xl border border-[#e5e9f0] bg-[#f6f7f9] pl-10 pr-4 py-2.5 text-sm font-medium text-[#0f1f38] placeholder:text-[#8a94a6] focus:border-[#012d63] focus:bg-white focus:outline-none"
-              />
-            </div>
-
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
-              {quickFilters.map((f) => {
-                const active = quickFilter === f.id;
-                return (
-                  <button
-                    key={f.id}
-                    type="button"
-                    onClick={() => setQuickFilter(f.id)}
-                    className={`shrink-0 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                      active
-                        ? 'bg-[#012d63] text-white shadow-xs'
-                        : 'bg-[#f6f7f9] text-[#5a6577] hover:bg-[#eef1f5]'
-                    }`}
-                  >
-                    {f.label}
-                  </button>
-                );
-              })}
-            </div>
+    <div className="flex flex-col flex-1 pb-24 md:pb-0 md:h-[calc(100dvh-64px)] md:overflow-hidden">
+      {/* Barra de Filtros em linha única no desktop */}
+      <section className="bg-white border-b border-[#e5e9f0] px-4 sm:px-6 py-3 shrink-0">
+        <div className="max-w-[1600px] mx-auto flex flex-col lg:flex-row lg:items-center gap-2.5">
+          {/* Busca */}
+          <div className="relative w-full lg:w-72 xl:w-80 shrink-0">
+            <Search className="h-4 w-4 text-[#8a94a6] absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar por nome ou telefone..."
+              className="w-full rounded-xl border border-[#e5e9f0] bg-[#f6f7f9] pl-10 pr-4 py-2 text-sm font-medium text-[#0f1f38] placeholder:text-[#8a94a6] focus:border-[#012d63] focus:bg-white focus:outline-none"
+            />
           </div>
 
-          {/* Tags + Selecionar todos filtrados */}
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-              <button
-                type="button"
-                onClick={() => setSelectedTagId(null)}
-                className={`shrink-0 px-3 py-1 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
-                  selectedTagId === null
-                    ? 'bg-[#012d63]/10 text-[#012d63] border-[#012d63]/30'
-                    : 'bg-white text-[#5a6577] border-[#e5e9f0]'
-                }`}
-              >
-                Todas as tags
-              </button>
-              {tags.map((tag) => {
-                const active = selectedTagId === tag.id;
-                return (
-                  <button
-                    key={tag.id}
-                    type="button"
-                    onClick={() => setSelectedTagId(active ? null : tag.id)}
-                    className={`shrink-0 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border transition-all cursor-pointer ${
-                      active
-                        ? 'text-white border-transparent shadow-xs'
-                        : 'bg-white text-[#5a6577] border-[#e5e9f0] hover:border-[#012d63]/40'
-                    }`}
-                    style={active ? { backgroundColor: tag.color || '#012d63' } : undefined}
-                  >
-                    {tag.name}
-                  </button>
-                );
-              })}
-            </div>
+          {/* Filtros rápidos + Cascata de Tags */}
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 lg:pb-0">
+            {quickFilters.map((f) => {
+              const active = quickFilter === f.id;
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setQuickFilter(f.id)}
+                  className={`shrink-0 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    active
+                      ? 'bg-[#012d63] text-white shadow-xs'
+                      : 'bg-[#f6f7f9] text-[#5a6577] hover:bg-[#eef1f5]'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              );
+            })}
 
-            {filteredLeads.length > 0 && (
-              <button
-                type="button"
-                onClick={() => onSelectMultipleLeads(filteredLeads.map((l) => l.id))}
-                className="shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold text-[#012d63] hover:text-[#eb5b29] transition-colors cursor-pointer"
-              >
-                <CheckSquare className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Selecionar filtrados</span> ({filteredLeads.length})
-              </button>
-            )}
+            {/* Filtro de Tags em cascata ao lado de Parados (+2 dias) */}
+            <select
+              value={selectedTagId ?? ''}
+              onChange={(e) => setSelectedTagId(e.target.value || null)}
+              aria-label="Filtrar por tag"
+              className={`shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold transition-all cursor-pointer focus:outline-none ${
+                selectedTagId
+                  ? 'border-[#012d63] bg-[#012d63]/8 text-[#012d63]'
+                  : 'border-[#e5e9f0] bg-[#f6f7f9] text-[#5a6577] hover:border-[#cbd5e1]'
+              }`}
+            >
+              <option value="">Todas as tags</option>
+              {tags.map((tag) => (
+                <option key={tag.id} value={tag.id}>
+                  {tag.name.toUpperCase()}
+                </option>
+              ))}
+            </select>
           </div>
+
+          {/* Selecionar filtrados na mesma linha */}
+          {filteredLeads.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onSelectMultipleLeads(filteredLeads.map((l) => l.id))}
+              className="lg:ml-auto shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold text-[#012d63] hover:text-[#eb5b29] transition-colors cursor-pointer self-end lg:self-auto"
+            >
+              <CheckSquare className="h-3.5 w-3.5" />
+              <span>Selecionar filtrados</span> ({filteredLeads.length})
+            </button>
+          )}
         </div>
       </section>
 
@@ -289,9 +273,9 @@ export function KanbanView({
           })}
       </div>
 
-      {/* DESKTOP: Colunas lado a lado com Drag-and-Drop */}
-      <div className="hidden md:block flex-1 overflow-x-auto px-6 py-5">
-        <div className="max-w-[1600px] mx-auto flex gap-4 items-start min-h-[calc(100vh-230px)]">
+      {/* DESKTOP: Colunas lado a lado com Drag-and-Drop e barra de rolagem horizontal sempre acessível */}
+      <div className="hidden md:flex flex-1 min-h-0 overflow-x-auto overflow-y-hidden kanban-scroll px-6 py-4">
+        <div className="flex gap-4 items-stretch h-full w-max min-w-full pb-2">
           {stages.map((stage) => {
             const stageLeads = leadsByStage.get(stage.id) || [];
             const isOver = dragOverStageId === stage.id;
@@ -305,14 +289,14 @@ export function KanbanView({
                 }}
                 onDragLeave={() => setDragOverStageId(null)}
                 onDrop={(e) => handleDrop(e, stage.id)}
-                className={`w-[320px] shrink-0 rounded-2xl p-3 transition-colors border ${
+                className={`w-[320px] shrink-0 max-h-full flex flex-col rounded-2xl p-3 transition-colors border ${
                   isOver
                     ? 'bg-[#012d63]/6 border-[#012d63] border-dashed'
                     : 'bg-[#eef1f5]/75 border-[#e5e9f0]'
                 }`}
               >
                 {/* Cabeçalho da coluna */}
-                <div className="flex items-center justify-between px-1.5 pb-3">
+                <div className="flex items-center justify-between px-1.5 pb-3 shrink-0">
                   <div className="flex items-center gap-2 min-w-0">
                     <span
                       className="h-2.5 w-2.5 rounded-full shrink-0"
@@ -333,8 +317,8 @@ export function KanbanView({
                   </button>
                 </div>
 
-                {/* Cards */}
-                <div className="space-y-2.5">
+                {/* Cards (scroll vertical independente por coluna) */}
+                <div className="space-y-2.5 flex-1 min-h-0 overflow-y-auto pr-0.5">
                   {stageLeads.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-[#cbd5e1] py-8 text-center text-xs text-[#8a94a6]">
                       Sem leads nesta etapa
