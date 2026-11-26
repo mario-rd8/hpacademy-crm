@@ -77,8 +77,15 @@ function CrmWorkspace() {
     );
   }
 
+  const isChatTab = activeTab === 'chat';
+  const hideMobileBottomNav = isChatTab && Boolean(activeChatLeadId);
+
   return (
-    <div className="min-h-dvh flex flex-col bg-[#f6f7f9]">
+    <div
+      className={`${
+        isChatTab ? 'h-dvh overflow-hidden' : 'min-h-dvh'
+      } flex flex-col bg-[#f6f7f9]`}
+    >
       <Header
         activeTab={activeTab}
         unreadCount={totalUnreadCount}
@@ -86,7 +93,7 @@ function CrmWorkspace() {
         onOpenNewLead={() => setNewLeadModalStageId(crm.stages[0]?.id || null)}
       />
 
-      <main className="flex-1 flex flex-col">
+      <main className={`flex-1 flex flex-col ${isChatTab ? 'min-h-0 overflow-hidden' : ''}`}>
         {crm.loading ? (
           <div className="flex-1 flex items-center justify-center py-20">
             <div className="flex flex-col items-center gap-3">
@@ -160,12 +167,14 @@ function CrmWorkspace() {
         )}
       </main>
 
-      <BottomNav
-        activeTab={activeTab}
-        unreadCount={totalUnreadCount}
-        onChangeTab={setActiveTab}
-      />
-      {activeTab !== 'chat' && <EvaFlowBadge />}
+      {!hideMobileBottomNav && (
+        <BottomNav
+          activeTab={activeTab}
+          unreadCount={totalUnreadCount}
+          onChangeTab={setActiveTab}
+        />
+      )}
+      {!isChatTab && <EvaFlowBadge />}
 
       {/* Gaveta de detalhes do Lead */}
       {activeLead && (

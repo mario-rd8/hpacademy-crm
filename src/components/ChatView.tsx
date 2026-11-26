@@ -553,15 +553,15 @@ export function ChatView({
   ).padStart(2, '0')}`;
 
   return (
-    <div className="flex-1 flex overflow-hidden h-[calc(100dvh-64px-64px)] md:h-[calc(100dvh-64px)] bg-[#f6f7f9]">
+    <div className="flex-1 min-h-0 h-full flex overflow-hidden bg-[#f6f7f9]">
       {/* COLUNA ESQUERDA: Lista de Conversas */}
       <aside
         className={`${
-          activeLead ? 'hidden md:flex' : 'flex'
-        } w-full md:w-[360px] lg:w-[390px] shrink-0 flex-col bg-white border-r border-[#e5e9f0]`}
+          activeLead ? 'hidden md:flex' : 'flex pb-16 md:pb-0'
+        } w-full md:w-[360px] lg:w-[390px] h-full min-h-0 shrink-0 flex-col overflow-hidden bg-white border-r border-[#e5e9f0]`}
       >
-        {/* Topo da Lista: Busca + Filtros */}
-        <div className="p-3.5 border-b border-[#e5e9f0] space-y-2.5">
+        {/* Topo da Lista: Busca + Filtros (fixo) */}
+        <div className="p-3.5 border-b border-[#e5e9f0] space-y-2.5 shrink-0">
           <div className="relative">
             <Search className="h-4 w-4 text-[#8a94a6] absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
@@ -622,8 +622,8 @@ export function ChatView({
           </div>
         </div>
 
-        {/* Lista de contatos */}
-        <div className="flex-1 overflow-y-auto divide-y divide-[#f1f5f9]">
+        {/* Lista de contatos (scroll independente) */}
+        <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-[#f1f5f9]">
           {sortedFilteredLeads.length === 0 ? (
             <div className="p-8 text-center text-xs text-[#8a94a6]">
               Nenhuma conversa encontrada com os filtros atuais.
@@ -715,7 +715,7 @@ export function ChatView({
       <section
         className={`${
           activeLead ? 'flex' : 'hidden md:flex'
-        } flex-1 flex-col min-w-0 bg-[#f6f7f9] relative`}
+        } flex-1 h-full min-h-0 flex-col min-w-0 overflow-hidden bg-[#f6f7f9] relative`}
       >
         {!activeLead ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
@@ -826,8 +826,8 @@ export function ChatView({
               </div>
             </header>
 
-            {/* Corpo da Conversa */}
-            <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 space-y-2.5">
+            {/* Corpo da Conversa (scroll independente) */}
+            <div className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 py-4 space-y-2.5">
               {loadingMsgs ? (
                 <div className="flex items-center justify-center py-12 gap-2 text-xs text-[#5a6577]">
                   <Loader2 className="h-4 w-4 animate-spin text-[#012d63]" />
@@ -989,8 +989,8 @@ export function ChatView({
               </div>
             )}
 
-            {/* Rodapé: Clipe + Estrela + Campo de Texto + Enviar / Microfone */}
-            <footer className="px-3 sm:px-4 py-2.5 bg-white border-t border-[#e5e9f0] shrink-0">
+            {/* Rodapé: Clipe + Estrela + Campo de Texto + Enviar / Microfone (fixo na base) */}
+            <footer className="px-3 sm:px-4 py-2.5 bg-white border-t border-[#e5e9f0] shrink-0 safe-pb">
               <input
                 ref={fileInputRef}
                 type="file"

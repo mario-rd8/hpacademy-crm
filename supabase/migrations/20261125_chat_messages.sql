@@ -36,7 +36,9 @@ CREATE INDEX IF NOT EXISTS idx_crm_chat_messages_lead
 CREATE INDEX IF NOT EXISTS idx_crm_chat_messages_evo
   ON crm.chat_messages(evolution_message_id);
 
+GRANT USAGE ON SCHEMA crm TO anon, authenticated, service_role;
 GRANT ALL ON TABLE crm.chat_messages TO authenticated, service_role;
+GRANT SELECT ON TABLE crm.chat_messages TO anon;
 
 -- Trigger: atualiza preview, last_message_at, last_activity_at e unread_count no lead
 CREATE OR REPLACE FUNCTION crm.sync_lead_on_chat_message()
@@ -90,3 +92,6 @@ BEGIN
     ALTER PUBLICATION supabase_realtime ADD TABLE crm.chat_messages;
   END IF;
 END $$;
+
+-- Força o PostgREST a recarregar o schema cache imediatamente
+NOTIFY pgrst, 'reload schema';
