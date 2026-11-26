@@ -26,9 +26,98 @@ const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL 
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const EVOLUTION_API_URL = (process.env.EVOLUTION_API_URL || 'https://evo.evaflow.com.br').replace(/\/$/, '');
-const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'evaflow';
+const DEFAULT_EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'evaflow';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '';
 const CRM_WEBHOOK_SECRET = process.env.CRM_WEBHOOK_SECRET || '';
+const CRM_PUBLIC_URL = (process.env.CRM_PUBLIC_URL || 'https://crm.hpacademy.com.br').replace(/\/$/, '');
+// Protege a instância compartilhada do site da EvaFlow contra exclusão acidental na Evolution API
+const PROTECTED_INSTANCES = new Set(['evaflow']);
+
+let activeInstanceCache = { value: null, expiresAt: 0 };
+
+function invalidateActiveInstanceCache() {
+  activeInstanceCache = { value: null, expiresAt: 0 };
+}
+
+function sanitizeInstanceName(raw) {
+  return String(raw || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-_]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^[-_]+|[-_]+$/g, '')
+    .slice(0, 48);
+}
+
+function mapConnectionState(rawState) {
+  const s = String(rawState || '').toLowerCase();
+  if (s === 'open' || s === 'connected') return 'connected';
+  if (s === 'connecting' || s === 'qrcode') return 'connecting';
+  return 'disconnected';
+}
+
+async function getWhatsAppSettingsRow() {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return null;
+  try {
+    const rows = await supabaseRest('whatsapp_settings?id=eq.true&select=*');
+    return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getActiveInstanceName() {
+  const now = Date.now();
+  if (activeInstanceCache.value && activeInstanceCache.expiresAt > now) {
+    return activeInstanceCache.value;
+  }
+  const row = await getWhatsAppSettingsRow();
+  const resolved = row?.instance_name || DEFAULT_EVOLUTION_INSTANCE;
+  activeInstanceCache = { value: resolved, expiresAt: now + 10_000 };
+  return resolved;
+}
+
+async function evolutionRequest(evoPath, { method = 'GET', body } = {}) {
+  if (!EVOLUTION_API_URL || !EVOLUTION_API_KEY) {
+    throw new Error('Evolution API não configurada no servidor (EVOLUTION_API_KEY ausente).');
+  }
+  const headers = { apikey: EVOLUTION_API_KEY };
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+
+  const res = await fetch(`${EVOLUTION_API_URL}${evoPath}`, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+
+  const rawText = await res.text().catch(() => '');
+  let data = null;
+  try {
+    data = rawText ? JSON.parse(rawText) : null;
+  } catch {
+    data = { raw: rawText };
+  }
+
+  return { ok: res.ok, status: res.status, data, rawText };
+}
+
+function extractQrCodeData(data) {
+  const rawBase64 =
+    data?.base64 ||
+    data?.qrcode?.base64 ||
+    data?.data?.base64 ||
+    null;
+  const qrcode = rawBase64
+    ? rawBase64.startsWith('data:image')
+      ? rawBase64
+      : `data:image/png;base64,${rawBase64}`
+    : null;
+  const pairingCode = data?.pairingCode || data?.qrcode?.pairingCode || null;
+  return { qrcode, pairingCode };
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -190,17 +279,18 @@ function phonesMatch(a, b) {
   return false;
 }
 
-async function dispatchToEvolution({ phone, text, mediaUrl, fileName, fileType }) {
-  if (!EVOLUTION_API_URL || !EVOLUTION_INSTANCE || !EVOLUTION_API_KEY) {
-    throw new Error('Evolution API não configurada no servidor (EVOLUTION_API_KEY ausente).');
+async function dispatchToEvolution({ phone, text, mediaUrl, fileName, fileType, instanceOverride }) {
+  const activeInstance = instanceOverride || (await getActiveInstanceName());
+  if (!EVOLUTION_API_URL || !activeInstance || !EVOLUTION_API_KEY) {
+    throw new Error('Evolution API não configurada no servidor (EVOLUTION_API_KEY ou instância ausente).');
   }
 
   const cleanNumber = onlyDigits(phone);
-  let endpoint = `${EVOLUTION_API_URL}/message/sendText/${EVOLUTION_INSTANCE}`;
+  let endpoint = `${EVOLUTION_API_URL}/message/sendText/${encodeURIComponent(activeInstance)}`;
   let payload;
 
   if (mediaUrl) {
-    endpoint = `${EVOLUTION_API_URL}/message/sendMedia/${EVOLUTION_INSTANCE}`;
+    endpoint = `${EVOLUTION_API_URL}/message/sendMedia/${encodeURIComponent(activeInstance)}`;
     const isPdf = fileType === 'application/pdf' || String(fileName || '').toLowerCase().endsWith('.pdf');
     payload = {
       number: cleanNumber,
@@ -246,6 +336,214 @@ async function dispatchToEvolution({ phone, text, mediaUrl, fileName, fileType }
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function recordOutboundChatMessage({
+  leadId,
+  evolutionMessageId,
+  messageType = 'text',
+  body = '',
+  mediaUrl = null,
+  mediaMime = null,
+  mediaFileName = null,
+  evolutionKey = null,
+  sentBy = 'Equipe HP',
+}) {
+  if (!leadId || !SUPABASE_SERVICE_ROLE_KEY) return null;
+  try {
+    const rows = await supabaseRest('chat_messages', {
+      method: 'POST',
+      prefer: 'resolution=ignore-duplicates,return=representation',
+      body: {
+        lead_id: leadId,
+        evolution_message_id: evolutionMessageId || null,
+        direction: 'outbound',
+        message_type: messageType,
+        body: body || '',
+        media_url: mediaUrl || null,
+        media_mime: mediaMime || null,
+        media_file_name: mediaFileName || null,
+        evolution_key: evolutionKey || null,
+        status: 'sent',
+        sent_by: sentBy || 'Equipe HP',
+      },
+    });
+    return Array.isArray(rows) ? rows[0] || null : rows;
+  } catch (err) {
+    console.warn('[CHAT SYNC OUTBOUND WARN]', err.message);
+    return null;
+  }
+}
+
+function inferMessageType(fileType, fileName) {
+  const mime = String(fileType || '').toLowerCase();
+  const name = String(fileName || '').toLowerCase();
+  if (mime.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/.test(name)) return 'image';
+  if (mime.startsWith('audio/') || /\.(ogg|mp3|wav|webm|m4a)$/.test(name)) return 'audio';
+  if (mime.startsWith('video/') || /\.(mp4|mov|mkv)$/.test(name)) return 'video';
+  if (mime || name) return 'document';
+  return 'text';
+}
+
+function parseIncomingWhatsAppMessage(msgObj) {
+  if (!msgObj || typeof msgObj !== 'object') return null;
+
+  // Desembrulha mensagens encapsuladas (ephemeral / viewOnce)
+  const inner =
+    msgObj.ephemeralMessage?.message ||
+    msgObj.viewOnceMessage?.message ||
+    msgObj.viewOnceMessageV2?.message ||
+    msgObj;
+
+  // Ignora figurinhas, reações e mensagens de protocolo
+  if (
+    inner.stickerMessage ||
+    inner.reactionMessage ||
+    inner.protocolMessage ||
+    inner.senderKeyDistributionMessage
+  ) {
+    if (
+      !inner.conversation &&
+      !inner.extendedTextMessage &&
+      !inner.imageMessage &&
+      !inner.audioMessage &&
+      !inner.documentMessage &&
+      !inner.videoMessage
+    ) {
+      return null;
+    }
+  }
+
+  if (inner.imageMessage) {
+    return {
+      messageType: 'image',
+      body: inner.imageMessage.caption || '',
+      mediaMime: inner.imageMessage.mimetype || 'image/jpeg',
+      mediaFileName: 'foto.jpg',
+    };
+  }
+  if (inner.audioMessage) {
+    return {
+      messageType: 'audio',
+      body: '',
+      mediaMime: inner.audioMessage.mimetype || 'audio/ogg',
+      mediaFileName: 'audio.ogg',
+    };
+  }
+  if (inner.documentMessage) {
+    return {
+      messageType: 'document',
+      body: inner.documentMessage.caption || '',
+      mediaMime: inner.documentMessage.mimetype || 'application/octet-stream',
+      mediaFileName: inner.documentMessage.fileName || 'documento',
+    };
+  }
+  if (inner.documentWithCaptionMessage?.message?.documentMessage) {
+    const doc = inner.documentWithCaptionMessage.message.documentMessage;
+    return {
+      messageType: 'document',
+      body: doc.caption || '',
+      mediaMime: doc.mimetype || 'application/octet-stream',
+      mediaFileName: doc.fileName || 'documento',
+    };
+  }
+  if (inner.videoMessage) {
+    return {
+      messageType: 'video',
+      body: inner.videoMessage.caption || '',
+      mediaMime: inner.videoMessage.mimetype || 'video/mp4',
+      mediaFileName: 'video.mp4',
+    };
+  }
+
+  const text = (inner.conversation || inner.extendedTextMessage?.text || '').trim();
+  if (!text) return null;
+
+  return {
+    messageType: 'text',
+    body: text,
+    mediaMime: null,
+    mediaFileName: null,
+  };
+}
+
+async function findOrCreateLeadForChat(phoneRaw, pushName, isInbound) {
+  const cleanPhone = normalizePhoneBr(phoneRaw);
+  if (cleanPhone.length < 12) return null;
+
+  // 1. Busca exata
+  const exact = await supabaseRest(
+    `leads?phone=eq.${encodeURIComponent(cleanPhone)}&select=id,name,phone,stage_id`
+  );
+  if (Array.isArray(exact) && exact.length > 0) return exact[0];
+
+  // 2. Busca tolerando 9º dígito (DDD + últimos 8)
+  if (cleanPhone.startsWith('55') && cleanPhone.length >= 12) {
+    const last8 = cleanPhone.slice(-8);
+    const candidates = await supabaseRest(
+      `leads?phone=like.*${encodeURIComponent(last8)}&select=id,name,phone,stage_id`
+    );
+    const matched = (candidates || []).find((c) => phonesMatch(c.phone, cleanPhone));
+    if (matched) return matched;
+  }
+
+  // 3. Não existe: cria automaticamente em "Contato novo"
+  const stages = await supabaseRest('stages?select=id,slug,position&order=position.asc');
+  const defaultStage =
+    (stages || []).find((s) => s.slug === 'contato-novo') || (stages || [])[0];
+  if (!defaultStage) return null;
+
+  const leadName =
+    (isInbound && pushName && String(pushName).trim()) || formatPhoneBr(cleanPhone);
+
+  const created = await supabaseRest('leads', {
+    method: 'POST',
+    prefer: 'return=representation',
+    body: {
+      name: leadName.slice(0, 120),
+      phone: cleanPhone,
+      stage_id: defaultStage.id,
+      source: 'whatsapp',
+      has_whatsapp: true,
+      is_returning: false,
+      last_activity_at: new Date().toISOString(),
+    },
+  });
+
+  return Array.isArray(created) ? created[0] || null : created;
+}
+
+async function dispatchAudioToEvolution({ phone, audioBase64 }) {
+  const activeInstance = await getActiveInstanceName();
+  if (!EVOLUTION_API_URL || !activeInstance || !EVOLUTION_API_KEY) {
+    throw new Error('Evolution API não configurada no servidor.');
+  }
+  const cleanNumber = onlyDigits(phone);
+  const res = await fetch(
+    `${EVOLUTION_API_URL}/message/sendWhatsAppAudio/${encodeURIComponent(activeInstance)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+      body: JSON.stringify({
+        number: cleanNumber,
+        audio: audioBase64,
+      }),
+    }
+  );
+  const rawText = await res.text().catch(() => '');
+  let data = null;
+  try {
+    data = rawText ? JSON.parse(rawText) : null;
+  } catch {
+    data = { raw: rawText };
+  }
+  if (!res.ok) {
+    throw new Error(`Evolution API erro áudio (${res.status}): ${rawText.slice(0, 300)}`);
+  }
+  return {
+    evolutionMessageId: data?.key?.id || data?.message?.key?.id || data?.id || null,
+    key: data?.key || null,
+  };
 }
 
 async function processBulkQueue({ leadIds, templateId, customMessage, sentBy }) {
@@ -298,6 +596,19 @@ async function processBulkQueue({ leadIds, templateId, customMessage, sentBy }) 
             },
           });
         }
+
+        await recordOutboundChatMessage({
+          leadId: lead.id,
+          evolutionMessageId: result.evolutionMessageId,
+          messageType: template?.file_url
+            ? inferMessageType(template.file_type, template.file_name)
+            : 'text',
+          body: messageBody,
+          mediaUrl: template?.file_url || null,
+          mediaMime: template?.file_type || null,
+          mediaFileName: template?.file_name || null,
+          sentBy: sentBy || 'Equipe HP',
+        });
       } catch (err) {
         if (logId) {
           await supabaseRest(`message_logs?id=eq.${logId}`, {
@@ -689,6 +1000,26 @@ async function handleCrmCommand(rawText, senderPhone, profile) {
 async function handleEvolutionWebhook(body) {
   const event = String(body?.event || '').toLowerCase();
 
+  // 0. Atualização de status da conexão WhatsApp (CONNECTION_UPDATE)
+  if (event.includes('connection.update') || event === 'connection_update') {
+    const incomingInstance = String(body?.instance || body?.data?.instance || '').trim();
+    const rawState = body?.data?.state || body?.state || '';
+    const mappedStatus = mapConnectionState(rawState);
+    const activeRow = await getWhatsAppSettingsRow();
+    if (
+      activeRow &&
+      incomingInstance &&
+      activeRow.instance_name === incomingInstance &&
+      activeRow.status !== mappedStatus
+    ) {
+      await supabaseRest('whatsapp_settings?id=eq.true', {
+        method: 'PATCH',
+        body: { status: mappedStatus },
+      }).catch(() => {});
+    }
+    return;
+  }
+
   // 1. Atualização de status de mensagens enviadas (delivered, read, error)
   if (event.includes('messages.update') || event === 'messages_update') {
     const items = Array.isArray(body?.data) ? body.data : body?.data ? [body.data] : [];
@@ -696,47 +1027,88 @@ async function handleEvolutionWebhook(body) {
       const evoId = item?.key?.id || item?.keyId || item?.id;
       const mapped = mapEvolutionStatus(item?.status ?? item?.update?.status);
       if (evoId && mapped && SUPABASE_SERVICE_ROLE_KEY) {
-        await supabaseRest(`message_logs?evolution_message_id=eq.${encodeURIComponent(evoId)}`, {
-          method: 'PATCH',
-          body: { status: mapped },
-        }).catch(() => {});
+        await Promise.all([
+          supabaseRest(`message_logs?evolution_message_id=eq.${encodeURIComponent(evoId)}`, {
+            method: 'PATCH',
+            body: { status: mapped },
+          }).catch(() => {}),
+          supabaseRest(`chat_messages?evolution_message_id=eq.${encodeURIComponent(evoId)}`, {
+            method: 'PATCH',
+            body: { status: mapped },
+          }).catch(() => {}),
+        ]);
       }
     }
     return;
   }
 
-  // 2. Mensagens recebidas (comandos @crm ou contatos compartilhados)
+  // 2. Mensagens recebidas e enviadas (Sincronia total + comandos @crm + vCard)
   if (event.includes('messages.upsert') || event === 'messages_upsert') {
     const data = body?.data;
     if (!data) return;
 
-    // Ignora mensagens enviadas pela própria instância e mensagens de grupos
-    if (data?.key?.fromMe) return;
     const remoteJid = String(data?.key?.remoteJid || '');
+    // Escopo enxuto: ignora grupos (@g.us) e status/broadcasts
     if (!remoteJid || remoteJid.endsWith('@g.us') || remoteJid.includes('status@broadcast')) return;
 
     const msgId = data?.key?.id;
     if (markMessageProcessed(msgId)) return;
 
-    const senderPhone = onlyDigits(remoteJid.split('@')[0]);
+    const fromMe = Boolean(data?.key?.fromMe);
+    const contactPhone = onlyDigits(remoteJid.split('@')[0]);
+    if (!contactPhone) return;
+
     const text = extractMessageText(data?.message);
     const sharedContacts = extractSharedContacts(data?.message);
 
-    const isCrmCommand = /^@crm\b/i.test(text);
-    if (!isCrmCommand && sharedContacts.length === 0) return;
-
-    // Trava de segurança: só responde aos telefones autorizados em crm.profiles
-    const profile = await findAuthorizedProfile(senderPhone);
-    if (!profile) return;
-
-    if (sharedContacts.length > 0) {
-      await handleSharedContacts(sharedContacts, senderPhone, profile);
-      return;
+    // 2A. Comandos @crm ou vCard enviados por membro autorizado da equipe (somente inbound)
+    if (!fromMe) {
+      const isCrmCommand = /^@crm\b/i.test(text);
+      if (isCrmCommand || sharedContacts.length > 0) {
+        const profile = await findAuthorizedProfile(contactPhone);
+        if (profile) {
+          if (sharedContacts.length > 0) {
+            await handleSharedContacts(sharedContacts, contactPhone, profile);
+            return;
+          }
+          if (isCrmCommand) {
+            await handleCrmCommand(text, contactPhone, profile);
+            return;
+          }
+        }
+      }
     }
 
-    if (isCrmCommand) {
-      await handleCrmCommand(text, senderPhone, profile);
-    }
+    // 2B. Conversa individual normal (inbound do lead ou outbound pelo celular físico)
+    const parsed = parseIncomingWhatsAppMessage(data?.message);
+    if (!parsed) return;
+
+    const lead = await findOrCreateLeadForChat(contactPhone, data?.pushName, !fromMe);
+    if (!lead) return;
+
+    const evolutionKey = {
+      id: msgId || undefined,
+      remoteJid,
+      fromMe,
+    };
+
+    await supabaseRest('chat_messages', {
+      method: 'POST',
+      prefer: 'resolution=ignore-duplicates',
+      body: {
+        lead_id: lead.id,
+        evolution_message_id: msgId || null,
+        direction: fromMe ? 'outbound' : 'inbound',
+        message_type: parsed.messageType,
+        body: parsed.body || '',
+        media_url: null, // Zero base64 salvo no banco — mídia carregada sob demanda!
+        media_mime: parsed.mediaMime,
+        media_file_name: parsed.mediaFileName,
+        evolution_key: parsed.messageType !== 'text' ? evolutionKey : null,
+        status: fromMe ? 'sent' : 'delivered',
+        sent_by: fromMe ? 'Celular' : null,
+      },
+    }).catch((err) => console.warn('[CHAT UPSERT WARN]', err.message));
   }
 }
 
@@ -746,10 +1118,220 @@ const server = http.createServer(async (req, res) => {
   try {
     // 1. Healthcheck
     if (req.method === 'GET' && urlPath === '/api/health') {
+      const activeInstance = await getActiveInstanceName();
       return sendJson(res, 200, {
         ok: true,
         service: 'hp-academy-crm',
         evolutionConfigured: Boolean(EVOLUTION_API_KEY),
+        activeInstance,
+      });
+    }
+
+    // 1.1. Gestão da Instância WhatsApp: Consultar status atual
+    if (req.method === 'GET' && urlPath === '/api/whatsapp/status') {
+      const user = await verifySupabaseJwt(req);
+      if (!user) return sendJson(res, 401, { error: 'Não autorizado' });
+
+      const row = await getWhatsAppSettingsRow();
+      if (!row) {
+        return sendJson(res, 200, {
+          configured: false,
+          instance_name: '',
+          phone: '',
+          status: 'disconnected',
+          updated_at: null,
+        });
+      }
+
+      let liveStatus = row.status;
+      try {
+        const stateRes = await evolutionRequest(
+          `/instance/connectionState/${encodeURIComponent(row.instance_name)}`
+        );
+        if (stateRes.ok) {
+          const rawState = stateRes.data?.instance?.state || stateRes.data?.state;
+          liveStatus = mapConnectionState(rawState);
+        } else if (stateRes.status === 404) {
+          liveStatus = 'disconnected';
+        }
+      } catch {
+        // Mantém último status conhecido se a Evolution oscilar momentaneamente
+      }
+
+      if (liveStatus !== row.status) {
+        await supabaseRest('whatsapp_settings?id=eq.true', {
+          method: 'PATCH',
+          body: { status: liveStatus },
+        }).catch(() => {});
+      }
+
+      return sendJson(res, 200, {
+        configured: true,
+        instance_name: row.instance_name,
+        phone: row.phone,
+        status: liveStatus,
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    // 1.2. Gestão da Instância WhatsApp: Gerar novo QR Code para reconectar instância ativa
+    if (req.method === 'POST' && urlPath === '/api/whatsapp/reconnect') {
+      const user = await verifySupabaseJwt(req);
+      if (!user) return sendJson(res, 401, { error: 'Não autorizado' });
+
+      const row = await getWhatsAppSettingsRow();
+      if (!row?.instance_name) {
+        return sendJson(res, 404, { error: 'Nenhuma instância configurada. Cadastre um número primeiro.' });
+      }
+
+      // Verifica se já está conectado antes de pedir QR Code
+      const stateCheck = await evolutionRequest(
+        `/instance/connectionState/${encodeURIComponent(row.instance_name)}`
+      );
+      if (stateCheck.ok && mapConnectionState(stateCheck.data?.instance?.state || stateCheck.data?.state) === 'connected') {
+        await supabaseRest('whatsapp_settings?id=eq.true', {
+          method: 'PATCH',
+          body: { status: 'connected' },
+        }).catch(() => {});
+        return sendJson(res, 200, { alreadyConnected: true, status: 'connected' });
+      }
+
+      const connectRes = await evolutionRequest(
+        `/instance/connect/${encodeURIComponent(row.instance_name)}`
+      );
+      if (!connectRes.ok) {
+        return sendJson(res, 502, {
+          error: `Não foi possível gerar QR Code (${connectRes.status}): ${connectRes.rawText.slice(0, 200)}`,
+        });
+      }
+
+      const { qrcode, pairingCode } = extractQrCodeData(connectRes.data);
+      if (!qrcode) {
+        return sendJson(res, 502, {
+          error: 'A Evolution API não retornou a imagem do QR Code. Tente novamente em alguns segundos.',
+        });
+      }
+
+      await supabaseRest('whatsapp_settings?id=eq.true', {
+        method: 'PATCH',
+        body: { status: 'connecting' },
+      }).catch(() => {});
+
+      return sendJson(res, 200, {
+        alreadyConnected: false,
+        status: 'connecting',
+        qrcode,
+        pairingCode,
+      });
+    }
+
+    // 1.3. Gestão da Instância WhatsApp: Criar nova instância (substituindo a anterior)
+    if (req.method === 'POST' && urlPath === '/api/whatsapp/instance') {
+      const user = await verifySupabaseJwt(req);
+      if (!user) return sendJson(res, 401, { error: 'Não autorizado' });
+
+      const body = await readJsonBody(req);
+      const instanceName = sanitizeInstanceName(body.instanceName || body.instance_name);
+      const cleanPhone = normalizePhoneBr(body.phone);
+
+      if (!instanceName || instanceName.length < 3) {
+        return sendJson(res, 400, {
+          error: 'Informe um nome de instância válido (mínimo 3 caracteres, sem espaços ou acentos).',
+        });
+      }
+      if (!cleanPhone.startsWith('55') || (cleanPhone.length !== 12 && cleanPhone.length !== 13)) {
+        return sendJson(res, 400, {
+          error: 'Informe um número de WhatsApp válido com DDD (ex: (81) 99999-9999).',
+        });
+      }
+
+      const previous = await getWhatsAppSettingsRow();
+
+      // Remove a instância anterior na Evolution API (preservando instâncias compartilhadas protegidas)
+      if (
+        previous?.instance_name &&
+        previous.instance_name !== instanceName &&
+        !PROTECTED_INSTANCES.has(previous.instance_name.toLowerCase())
+      ) {
+        await evolutionRequest(`/instance/logout/${encodeURIComponent(previous.instance_name)}`, {
+          method: 'DELETE',
+        }).catch(() => {});
+        await evolutionRequest(`/instance/delete/${encodeURIComponent(previous.instance_name)}`, {
+          method: 'DELETE',
+        }).catch(() => {});
+      }
+
+      // Cria a nova instância na Evolution API já com o webhook do CRM
+      const webhookUrl = `${CRM_PUBLIC_URL}/api/webhooks/evolution`;
+      const createRes = await evolutionRequest('/instance/create', {
+        method: 'POST',
+        body: {
+          instanceName,
+          number: cleanPhone,
+          qrcode: true,
+          integration: 'WHATSAPP-BAILEYS',
+          webhook: {
+            url: webhookUrl,
+            byEvents: false,
+            base64: false,
+            events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE'],
+          },
+        },
+      });
+
+      let qrPayload = extractQrCodeData(createRes.data);
+
+      // Se a instância já existia (403/409) ou não devolveu QR na criação, garante webhook e puxa /connect
+      if (!createRes.ok && createRes.status !== 403 && createRes.status !== 409) {
+        return sendJson(res, 502, {
+          error: `Erro ao criar instância na Evolution API (${createRes.status}): ${createRes.rawText.slice(0, 220)}`,
+        });
+      }
+
+      // Garante que o webhook está ativo na nova instância
+      await evolutionRequest(`/webhook/set/${encodeURIComponent(instanceName)}`, {
+        method: 'POST',
+        body: {
+          webhook: {
+            enabled: true,
+            url: webhookUrl,
+            webhookByEvents: false,
+            webhookBase64: false,
+            events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE'],
+          },
+        },
+      }).catch(() => {});
+
+      if (!qrPayload.qrcode) {
+        const connectRes = await evolutionRequest(
+          `/instance/connect/${encodeURIComponent(instanceName)}`
+        );
+        if (connectRes.ok) {
+          qrPayload = extractQrCodeData(connectRes.data);
+        }
+      }
+
+      // Persiste como única instância ativa (singleton id = true)
+      await supabaseRest('whatsapp_settings', {
+        method: 'POST',
+        prefer: 'resolution=merge-duplicates',
+        body: {
+          id: true,
+          instance_name: instanceName,
+          phone: cleanPhone,
+          status: 'connecting',
+        },
+      });
+
+      invalidateActiveInstanceCache();
+
+      return sendJson(res, 200, {
+        configured: true,
+        instance_name: instanceName,
+        phone: cleanPhone,
+        status: 'connecting',
+        qrcode: qrPayload.qrcode,
+        pairingCode: qrPayload.pairingCode,
       });
     }
 
@@ -759,7 +1341,7 @@ const server = http.createServer(async (req, res) => {
       if (!user) return sendJson(res, 401, { error: 'Não autorizado' });
 
       const body = await readJsonBody(req);
-      const { message_log_id, phone, text, media_url, file_name, file_type } = body;
+      const { message_log_id, lead_id, phone, text, media_url, file_name, file_type, sent_by } = body;
       if (!phone) return sendJson(res, 400, { error: 'Telefone obrigatório' });
 
       try {
@@ -778,6 +1360,19 @@ const server = http.createServer(async (req, res) => {
               status: 'sent',
               evolution_message_id: result.evolutionMessageId,
             },
+          });
+        }
+
+        if (lead_id) {
+          await recordOutboundChatMessage({
+            leadId: lead_id,
+            evolutionMessageId: result.evolutionMessageId,
+            messageType: media_url ? inferMessageType(file_type, file_name) : 'text',
+            body: text || '',
+            mediaUrl: media_url || null,
+            mediaMime: file_type || null,
+            mediaFileName: file_name || null,
+            sentBy: sent_by || user.user_metadata?.full_name || 'Equipe HP',
           });
         }
 
@@ -816,6 +1411,130 @@ const server = http.createServer(async (req, res) => {
       });
 
       return sendJson(res, 202, { ok: true, queued: leadIds.length });
+    }
+
+    // 3.1. Chat: Enviar texto ou anexo/material da Biblioteca
+    if (req.method === 'POST' && urlPath === '/api/chat/send') {
+      const user = await verifySupabaseJwt(req);
+      if (!user) return sendJson(res, 401, { error: 'Não autorizado' });
+
+      const body = await readJsonBody(req);
+      const { lead_id, phone, text, media_url, file_name, file_type, sent_by } = body;
+      if (!lead_id || !phone) {
+        return sendJson(res, 400, { error: 'lead_id e phone são obrigatórios' });
+      }
+      if (!String(text || '').trim() && !media_url) {
+        return sendJson(res, 400, { error: 'Informe uma mensagem ou anexo.' });
+      }
+
+      const result = await dispatchToEvolution({
+        phone,
+        text: text || '',
+        mediaUrl: media_url || null,
+        fileName: file_name || null,
+        fileType: file_type || null,
+      });
+
+      const saved = await recordOutboundChatMessage({
+        leadId: lead_id,
+        evolutionMessageId: result.evolutionMessageId,
+        messageType: media_url ? inferMessageType(file_type, file_name) : 'text',
+        body: text || '',
+        mediaUrl: media_url || null,
+        mediaMime: file_type || null,
+        mediaFileName: file_name || null,
+        sentBy: sent_by || user.user_metadata?.full_name || 'Equipe HP',
+      });
+
+      return sendJson(res, 200, { ok: true, message: saved });
+    }
+
+    // 3.2. Chat: Enviar áudio gravado pelo navegador (sem salvar base64 no Postgres)
+    if (req.method === 'POST' && urlPath === '/api/chat/send-audio') {
+      const user = await verifySupabaseJwt(req);
+      if (!user) return sendJson(res, 401, { error: 'Não autorizado' });
+
+      const body = await readJsonBody(req, 15_000_000);
+      const { lead_id, phone, audio_base64, mime_type, sent_by } = body;
+      if (!lead_id || !phone || !audio_base64) {
+        return sendJson(res, 400, { error: 'lead_id, phone e audio_base64 são obrigatórios' });
+      }
+
+      const result = await dispatchAudioToEvolution({ phone, audioBase64: audio_base64 });
+
+      const saved = await recordOutboundChatMessage({
+        leadId: lead_id,
+        evolutionMessageId: result.evolutionMessageId,
+        messageType: 'audio',
+        body: '',
+        mediaUrl: null,
+        mediaMime: mime_type || 'audio/ogg',
+        mediaFileName: 'audio.ogg',
+        evolutionKey: result.key || null,
+        sentBy: sent_by || user.user_metadata?.full_name || 'Equipe HP',
+      });
+
+      return sendJson(res, 200, { ok: true, message: saved });
+    }
+
+    // 3.3. Chat: Carregar/baixar mídia sob demanda direto da Evolution API (zero base64 no banco)
+    if (req.method === 'GET' && urlPath.startsWith('/api/chat/media/')) {
+      const user = await verifySupabaseJwt(req);
+      if (!user) return sendJson(res, 401, { error: 'Não autorizado' });
+
+      const messageId = decodeURIComponent(urlPath.slice('/api/chat/media/'.length));
+      if (!messageId) return sendJson(res, 400, { error: 'ID inválido' });
+
+      const rows = await supabaseRest(
+        `chat_messages?id=eq.${encodeURIComponent(messageId)}&select=id,media_url,media_mime,media_file_name,evolution_key`
+      );
+      const row = Array.isArray(rows) ? rows[0] : null;
+      if (!row) return sendJson(res, 404, { error: 'Mensagem não encontrada' });
+
+      if (row.media_url) {
+        const proxyRes = await fetch(row.media_url);
+        if (!proxyRes.ok) return sendJson(res, 502, { error: 'Erro ao baixar anexo' });
+        const buf = Buffer.from(await proxyRes.arrayBuffer());
+        res.writeHead(200, {
+          'Content-Type': row.media_mime || proxyRes.headers.get('content-type') || 'application/octet-stream',
+          'Cache-Control': 'private, max-age=3600',
+        });
+        return res.end(buf);
+      }
+
+      if (!row.evolution_key) {
+        return sendJson(res, 404, { error: 'Mídia não disponível para download sob demanda.' });
+      }
+
+      const activeInstance = await getActiveInstanceName();
+      const evoRes = await evolutionRequest(
+        `/chat/getBase64FromMediaMessage/${encodeURIComponent(activeInstance)}`,
+        {
+          method: 'POST',
+          body: {
+            message: { key: row.evolution_key },
+            convertToMp4: false,
+          },
+        }
+      );
+
+      const base64Str = evoRes.data?.base64 || evoRes.data?.data?.base64;
+      if (!evoRes.ok || !base64Str) {
+        return sendJson(res, 502, {
+          error: 'A Evolution API não conseguiu recuperar esta mídia (pode ter expirado no WhatsApp).',
+        });
+      }
+
+      const cleanedB64 = String(base64Str).replace(/^data:[^;]+;base64,/, '');
+      const buffer = Buffer.from(cleanedB64, 'base64');
+      const mimeType = evoRes.data?.mimetype || row.media_mime || 'application/octet-stream';
+
+      res.writeHead(200, {
+        'Content-Type': mimeType,
+        'Content-Length': buffer.length,
+        'Cache-Control': 'private, max-age=1800',
+      });
+      return res.end(buffer);
     }
 
     // 4. Webhook da Evolution API (MESSAGES_UPDATE + MESSAGES_UPSERT @crm e vCard)

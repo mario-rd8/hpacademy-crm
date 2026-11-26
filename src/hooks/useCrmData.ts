@@ -21,6 +21,10 @@ interface RawLeadRow {
   enrollment_status: EnrollmentStatus;
   has_whatsapp: boolean;
   is_returning: boolean;
+  unread_count?: number;
+  last_message_preview?: string | null;
+  last_message_at?: string | null;
+  avatar_url?: string | null;
   last_activity_at: string;
   created_at: string;
   updated_at: string;
@@ -74,6 +78,10 @@ export function useCrmData(enabled: boolean) {
         enrollment_status: row.enrollment_status,
         has_whatsapp: row.has_whatsapp,
         is_returning: row.is_returning,
+        unread_count: row.unread_count ?? 0,
+        last_message_preview: row.last_message_preview ?? null,
+        last_message_at: row.last_message_at ?? null,
+        avatar_url: row.avatar_url ?? null,
         last_activity_at: row.last_activity_at,
         created_at: row.created_at,
         updated_at: row.updated_at,

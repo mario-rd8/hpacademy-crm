@@ -6,10 +6,10 @@ import {
   CheckCheck,
   CheckCircle2,
   Clock,
-  ExternalLink,
   FileText,
   Globe,
   Loader2,
+  MessageCircle,
   MessageSquare,
   Paperclip,
   PhoneOff,
@@ -37,7 +37,6 @@ import {
   applyTemplateVariables,
   formatDateTimeBr,
   formatPhoneMask,
-  getWhatsAppUrl,
   isValidBrPhone,
 } from '../utils/phone';
 
@@ -47,6 +46,7 @@ interface LeadDrawerProps {
   tags: Tag[];
   templates: MediaTemplate[];
   onClose: () => void;
+  onOpenChat: (lead: Lead) => void;
   onUpdateLead: (
     leadId: string,
     patch: Partial<{
@@ -78,6 +78,7 @@ export function LeadDrawer({
   tags,
   templates,
   onClose,
+  onOpenChat,
   onUpdateLead,
   onRequestMove,
   onToggleTag,
@@ -773,17 +774,16 @@ export function LeadDrawer({
           )}
         </div>
 
-        {/* Rodapé fixo para uso com uma mão: Botão Continuar no WhatsApp */}
+        {/* Rodapé fixo para uso com uma mão: Botão Conversar (abre o Chat integrado) */}
         <div className="p-4 border-t border-[#e5e9f0] bg-white shrink-0 safe-pb">
-          <a
-            href={getWhatsAppUrl(lead.phone)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full flex items-center justify-center gap-2 rounded-2xl bg-[#25D366] hover:bg-[#1fb858] active:scale-[0.99] text-white font-bold py-3.5 text-sm shadow-lg shadow-[#25D366]/25 transition-all"
+          <button
+            type="button"
+            onClick={() => onOpenChat(lead)}
+            className="w-full flex items-center justify-center gap-2 rounded-2xl bg-[#012d63] hover:bg-[#001f47] active:scale-[0.99] text-white font-bold py-3.5 text-sm shadow-lg shadow-[#012d63]/20 transition-all cursor-pointer"
           >
-            <ExternalLink className="h-4 w-4" />
-            Continuar no WhatsApp
-          </a>
+            <MessageCircle className="h-4 w-4 text-[#eb5b29]" />
+            Conversar
+          </button>
         </div>
       </aside>
     </div>

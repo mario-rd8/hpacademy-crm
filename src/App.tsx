@@ -5,6 +5,7 @@ import { useCrmData } from './hooks/useCrmData';
 import type { AppTab, Lead } from './types/database.types';
 import { BottomNav } from './components/BottomNav';
 import { BulkSendModal } from './components/BulkSendModal';
+import { ChatView } from './components/ChatView';
 import { EvaFlowBadge } from './components/EvaFlowBadge';
 import { Header } from './components/Header';
 import { KanbanView } from './components/KanbanView';
@@ -21,11 +22,17 @@ function CrmWorkspace() {
 
   const [activeTab, setActiveTab] = useState<AppTab>('kanban');
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [activeChatLeadId, setActiveChatLeadId] = useState<string | null>(null);
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [newLeadModalStageId, setNewLeadModalStageId] = useState<string | null | undefined>(undefined);
   const [bulkSendOpen, setBulkSendOpen] = useState(false);
   const [pendingLossMove, setPendingLossMove] = useState<{ lead: Lead; stageId: string } | null>(
     null
+  );
+
+  const totalUnreadCount = useMemo(
+    () => crm.leads.reduce((sum, l) => sum + (l.unread_count || 0), 0),
+    [crm.leads]
   );
 
   const activeLead = useMemo(
@@ -74,6 +81,7 @@ function CrmWorkspace() {
     <div className="min-h-dvh flex flex-col bg-[#f6f7f9]">
       <Header
         activeTab={activeTab}
+        unreadCount={totalUnreadCount}
         onChangeTab={setActiveTab}
         onOpenNewLead={() => setNewLeadModalStageId(crm.stages[0]?.id || null)}
       />
@@ -123,6 +131,16 @@ function CrmWorkspace() {
             onOpenBulkSend={() => setBulkSendOpen(true)}
             onOpenNewLead={(stageId) => setNewLeadModalStageId(stageId || crm.stages[0]?.id || null)}
           />
+        ) : activeTab === 'chat' ? (
+          <ChatView
+            leads={crm.leads}
+            stages={crm.stages}
+            templates={crm.templates}
+            selectedLeadId={activeChatLeadId}
+            onSelectLead={setActiveChatLeadId}
+            onOpenLeadDrawer={(lead) => setSelectedLeadId(lead.id)}
+            onRequestMove={handleRequestMove}
+          />
         ) : activeTab === 'materials' ? (
           <MediaLibraryView templates={crm.templates} onRefresh={crm.refresh} />
         ) : (
@@ -142,8 +160,12 @@ function CrmWorkspace() {
         )}
       </main>
 
-      <BottomNav activeTab={activeTab} onChangeTab={setActiveTab} />
-      <EvaFlowBadge />
+      <BottomNav
+        activeTab={activeTab}
+        unreadCount={totalUnreadCount}
+        onChangeTab={setActiveTab}
+      />
+      {activeTab !== 'chat' && <EvaFlowBadge />}
 
       {/* Gaveta de detalhes do Lead */}
       {activeLead && (
@@ -153,6 +175,11 @@ function CrmWorkspace() {
           tags={crm.tags}
           templates={crm.templates}
           onClose={() => setSelectedLeadId(null)}
+          onOpenChat={(lead) => {
+            setSelectedLeadId(null);
+            setActiveChatLeadId(lead.id);
+            setActiveTab('chat');
+          }}
           onUpdateLead={crm.updateLead}
           onRequestMove={handleRequestMove}
           onToggleTag={crm.toggleLeadTag}

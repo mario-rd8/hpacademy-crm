@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import type { LossReason, Stage, Tag } from '../types/database.types';
+import { WhatsAppConnectionCard } from './WhatsAppConnectionCard';
 
 interface SettingsViewProps {
   stages: Stage[];
@@ -97,6 +98,9 @@ export function SettingsView({
           {feedback}
         </div>
       )}
+
+      {/* 0. Conexão WhatsApp (Evolution API) */}
+      <WhatsAppConnectionCard />
 
       {/* 1. Colunas do Kanban */}
       <section className="rounded-2xl bg-white border border-[#e5e9f0] p-5 space-y-4">

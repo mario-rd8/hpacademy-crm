@@ -4,7 +4,7 @@ export type MessageStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'error';
 
 export type QuickFilter = 'all' | 'today_tasks' | 'overdue' | 'stale';
 
-export type AppTab = 'kanban' | 'materials' | 'settings';
+export type AppTab = 'kanban' | 'chat' | 'materials' | 'settings';
 
 export interface Profile {
   id: string;
@@ -41,11 +41,34 @@ export interface Lead {
   enrollment_status: EnrollmentStatus;
   has_whatsapp: boolean;
   is_returning: boolean;
+  unread_count: number;
+  last_message_preview: string | null;
+  last_message_at: string | null;
+  avatar_url: string | null;
   last_activity_at: string;
   created_at: string;
   updated_at: string;
   tags: Tag[];
   tasks: Task[];
+}
+
+export type ChatDirection = 'inbound' | 'outbound';
+export type ChatMessageType = 'text' | 'image' | 'audio' | 'document' | 'video';
+
+export interface ChatMessage {
+  id: string;
+  lead_id: string;
+  evolution_message_id: string | null;
+  direction: ChatDirection;
+  message_type: ChatMessageType;
+  body: string;
+  media_url: string | null;
+  media_mime: string | null;
+  media_file_name: string | null;
+  evolution_key: { id?: string; remoteJid?: string; fromMe?: boolean } | null;
+  status: MessageStatus;
+  sent_by: string | null;
+  created_at: string;
 }
 
 export interface LeadNote {
@@ -99,4 +122,14 @@ export interface LossReason {
   label: string;
   position: number;
   created_at: string;
+}
+
+export type WhatsAppConnectionStatus = 'connected' | 'disconnected' | 'connecting';
+
+export interface WhatsAppSettings {
+  configured: boolean;
+  instance_name: string;
+  phone: string;
+  status: WhatsAppConnectionStatus;
+  updated_at: string | null;
 }

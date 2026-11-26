@@ -1,18 +1,20 @@
-import { FileText, Kanban, LogOut, Plus, Settings } from 'lucide-react';
+import { FileText, Kanban, LogOut, MessageCircle, Plus, Settings } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import type { AppTab } from '../types/database.types';
 
 interface HeaderProps {
   activeTab: AppTab;
+  unreadCount: number;
   onChangeTab: (tab: AppTab) => void;
   onOpenNewLead: () => void;
 }
 
-export function Header({ activeTab, onChangeTab, onOpenNewLead }: HeaderProps) {
+export function Header({ activeTab, unreadCount, onChangeTab, onOpenNewLead }: HeaderProps) {
   const { displayName, signOut } = useAuth();
 
-  const navItems: { id: AppTab; label: string; icon: typeof Kanban }[] = [
+  const navItems: { id: AppTab; label: string; icon: typeof Kanban; badge?: number }[] = [
     { id: 'kanban', label: 'Kanban', icon: Kanban },
+    { id: 'chat', label: 'Conversas', icon: MessageCircle, badge: unreadCount },
     { id: 'materials', label: 'Materiais', icon: FileText },
     { id: 'settings', label: 'Configurações', icon: Settings },
   ];
@@ -34,7 +36,7 @@ export function Header({ activeTab, onChangeTab, onOpenNewLead }: HeaderProps) {
 
         {/* Navegação Desktop */}
         <nav className="hidden md:flex items-center gap-1 bg-[#f6f7f9] p-1 rounded-xl border border-[#e5e9f0]">
-          {navItems.map(({ id, label, icon: Icon }) => {
+          {navItems.map(({ id, label, icon: Icon, badge }) => {
             const active = activeTab === id;
             return (
               <button
@@ -48,6 +50,15 @@ export function Header({ activeTab, onChangeTab, onOpenNewLead }: HeaderProps) {
               >
                 <Icon className="h-4 w-4" />
                 {label}
+                {badge && badge > 0 ? (
+                  <span
+                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold leading-none ${
+                      active ? 'bg-[#eb5b29] text-white' : 'bg-[#eb5b29] text-white'
+                    }`}
+                  >
+                    {badge > 99 ? '99+' : badge}
+                  </span>
+                ) : null}
               </button>
             );
           })}

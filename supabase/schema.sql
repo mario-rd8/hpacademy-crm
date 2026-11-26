@@ -169,6 +169,18 @@ CREATE TABLE IF NOT EXISTS crm.loss_reasons (
 );
 
 -- -----------------------------------------------------------------------------
+-- 9.1. Configuração da Instância WhatsApp Ativa (Singleton: 1 por vez)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS crm.whatsapp_settings (
+  id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id = true),
+  instance_name TEXT NOT NULL,
+  phone TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'disconnected'
+    CHECK (status IN ('connected', 'disconnected', 'connecting')),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- -----------------------------------------------------------------------------
 -- 10. Triggers Automáticos (last_activity_at e updated_at)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION crm.touch_updated_at()
@@ -300,6 +312,7 @@ ALTER TABLE crm.tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE crm.media_templates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE crm.message_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE crm.loss_reasons ENABLE ROW LEVEL SECURITY;
+ALTER TABLE crm.whatsapp_settings ENABLE ROW LEVEL SECURITY;
 
 -- Policies para usuários autenticados (equipe comercial HP Academy)
 DO $$
@@ -308,7 +321,7 @@ DECLARE
 BEGIN
   FOREACH tbl IN ARRAY ARRAY[
     'profiles', 'stages', 'leads', 'tags', 'lead_tags',
-    'lead_notes', 'tasks', 'media_templates', 'message_logs', 'loss_reasons'
+    'lead_notes', 'tasks', 'media_templates', 'message_logs', 'loss_reasons', 'whatsapp_settings'
   ] LOOP
     EXECUTE format('DROP POLICY IF EXISTS "authenticated_all_%s" ON crm.%I', tbl, tbl);
     EXECUTE format(

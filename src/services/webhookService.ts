@@ -1,13 +1,11 @@
 import { crmDb, supabase } from './supabaseClient';
 import type { Lead, MessageLog } from '../types/database.types';
 
-// Endpoints nativos do servidor do CRM (sem n8n) — podem ser sobrescritos via VITE_WEBHOOK_*
+// Endpoints nativos do servidor do CRM (sem n8n) — instância resolvida dinamicamente no backend
 const ENDPOINT_SEND_MESSAGE =
   (import.meta.env.VITE_WEBHOOK_SEND_MESSAGE as string | undefined) || '/api/messages/send';
 const ENDPOINT_BULK_SEND =
   (import.meta.env.VITE_WEBHOOK_BULK_SEND as string | undefined) || '/api/messages/bulk';
-const EVOLUTION_INSTANCE =
-  (import.meta.env.VITE_EVOLUTION_INSTANCE as string | undefined) || 'evaflow';
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -64,7 +62,6 @@ export async function sendSingleMessage(params: SendSingleMessageParams): Promis
       headers,
       body: JSON.stringify({
         message_log_id: createdLog.id,
-        instance: EVOLUTION_INSTANCE,
         lead_id: lead.id,
         lead_name: lead.name,
         phone: lead.phone,
@@ -124,7 +121,6 @@ export async function sendBulkMessages(params: SendBulkMessagesParams): Promise<
     method: 'POST',
     headers,
     body: JSON.stringify({
-      instance: EVOLUTION_INSTANCE,
       lead_ids: params.leadIds,
       template_id: params.templateId,
       custom_message: params.customMessage || null,
